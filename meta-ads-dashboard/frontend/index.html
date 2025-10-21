@@ -6,10 +6,174 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <script type="module" crossorigin src="/assets/index-gjOK_Q4b.js"></script>
   <link rel="stylesheet" crossorigin href="/assets/index-cOskUN71.css">
+  <style>
+    body {
+      margin: 0;
+      padding: 0;
+      display: flex;
+      height: 100vh;
+      overflow: hidden;
+    }
+    #root {
+      flex-grow: 1;
+      overflow-y: auto;
+    }
+    .chat-sidebar {
+      width: 400px;
+      background-color: #1e2936;
+      display: flex;
+      flex-direction: column;
+      border-left: 1px solid #2d3748;
+    }
+    .chat-header {
+      background-color: #007bff;
+      color: #fff;
+      padding: 15px;
+      text-align: center;
+      font-weight: bold;
+      font-size: 18px;
+    }
+    .chat-messages {
+      flex-grow: 1;
+      padding: 15px;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    .message {
+      padding: 10px 15px;
+      border-radius: 15px;
+      max-width: 80%;
+      word-wrap: break-word;
+    }
+    .message.user {
+      background-color: #dcf8c6;
+      align-self: flex-end;
+      margin-left: auto;
+      color: #000;
+    }
+    .message.agent {
+      background-color: #e0e0e0;
+      align-self: flex-start;
+      margin-right: auto;
+      color: #000;
+    }
+    .chat-input-container {
+      display: flex;
+      padding: 15px;
+      border-top: 1px solid #2d3748;
+      gap: 10px;
+    }
+    .chat-input {
+      flex-grow: 1;
+      padding: 10px 15px;
+      border: 1px solid #4a5568;
+      border-radius: 20px;
+      background-color: #2d3748;
+      color: #fff;
+      outline: none;
+    }
+    .chat-input::placeholder {
+      color: #a0aec0;
+    }
+    .chat-button {
+      background-color: #007bff;
+      color: #fff;
+      border: none;
+      padding: 10px 20px;
+      border-radius: 20px;
+      cursor: pointer;
+      font-weight: bold;
+    }
+    .chat-button:hover {
+      background-color: #0056b3;
+    }
+  </style>
 </head>
 
 <body>
   <div id="root"></div>
+
+  <div class="chat-sidebar">
+    <div class="chat-header">Chat</div>
+    <div id="chat-messages" class="chat-messages"></div>
+    <div class="chat-input-container">
+      <input type="text" id="chat-input" class="chat-input" placeholder="Type a message...">
+      <button id="chat-send-button" class="chat-button">Send</button>
+    </div>
+  </div>
+
+  <script>
+    document.addEventListener("DOMContentLoaded", () => {
+      const chatMessages = document.getElementById("chat-messages");
+      const chatInput = document.getElementById("chat-input");
+      const chatSendButton = document.getElementById("chat-send-button");
+
+      const API_BASE_URL = window.location.origin;
+
+      function addMessage(sender, text) {
+        const messageDiv = document.createElement("div");
+        messageDiv.classList.add("message", sender);
+        messageDiv.textContent = text;
+        chatMessages.appendChild(messageDiv);
+        chatMessages.scrollTop = chatMessages.scrollHeight;
+      }
+
+      async function sendMessage() {
+        const messageText = chatInput.value.trim();
+        if (messageText === "") return;
+
+        addMessage("user", messageText);
+        chatInput.value = "";
+
+        try {
+          const response = await fetch(`${API_BASE_URL}/api/chat`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ message: messageText })
+          });
+          const data = await response.json();
+          addMessage("agent", data.response);
+        } catch (error) {
+          console.error("Error sending message:", error);
+          addMessage("agent", "Error: Could not connect to the agent.");
+        }
+      }
+
+      chatSendButton.addEventListener("click", sendMessage);
+      chatInput.addEventListener("keypress", (event) => {
+        if (event.key === "Enter") {
+          sendMessage();
+        }
+      });
+
+      // WebSocket for real-time status updates
+      const ws = new WebSocket(`wss://${window.location.host}/ws/status`);
+
+      ws.onopen = () => {
+        console.log("WebSocket connection established.");
+      };
+
+      ws.onmessage = (event) => {
+        const data = JSON.parse(event.data);
+        if (data.success && data.services) {
+          // Here, you would update the main dashboard UI with the new status.
+          // Since we can't directly modify the React app, we'll log it for now.
+          console.log("Received real-time status update:", data.services);
+        }
+      };
+
+      ws.onclose = () => {
+        console.log("WebSocket connection closed.");
+      };
+
+      ws.onerror = (error) => {
+        console.error("WebSocket error:", error);
+      };
+    });
+  </script>
 </body>
 
 </html>
+
