@@ -1,9 +1,13 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 import subprocess
 import os
 from typing import Dict, List
 import logging
+import asyncio
+import json
+from pydantic import BaseModel
+import httpx
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -20,6 +24,26 @@ app.add_middleware(
 
 DOCKER_COMPOSE_DIR = "/root/meta-ads-master-agent"
 SERVICE_NAMES = ["master", "image-generator", "performance-analyzer", "campaign-manager"]
+
+class ConnectionManager:
+    def __init__(self):
+        self.active_connections: List[WebSocket] = []
+
+    async def connect(self, websocket: WebSocket):
+        await websocket.accept()
+        self.active_connections.append(websocket)
+
+    def disconnect(self, websocket: WebSocket):
+        self.active_connections.remove(websocket)
+
+    async def send_personal_message(self, message: str, websocket: WebSocket):
+        await websocket.send_text(message)
+
+    async def broadcast(self, message: str):
+        for connection in self.active_connections:
+            await connection.send_text(message)
+
+manager = ConnectionManager()
 
 def run_command(command: List[str], cwd: str = DOCKER_COMPOSE_DIR) -> tuple:
     """Execute a shell command and return output and error."""
@@ -59,6 +83,17 @@ def get_container_status(service_name: str) -> Dict:
         "container_id": container_id
     }
 
+async def get_all_services_status_data() -> Dict:
+    """Helper to get status of all services without raising HTTPExceptions."""
+    services = []
+    for service_name in SERVICE_NAMES:
+        service_status = get_container_status(service_name)
+        services.append(service_status)
+    return {
+        "success": True,
+        "services": services
+    }
+
 @app.get("/")
 async def root():
     return {"message": "Meta Ads AI Agent Management API", "version": "1.0.0"}
@@ -67,15 +102,7 @@ async def root():
 async def get_all_status():
     """Get status of all services."""
     try:
-        services = []
-        for service_name in SERVICE_NAMES:
-            service_status = get_container_status(service_name)
-            services.append(service_status)
-        
-        return {
-            "success": True,
-            "services": services
-        }
+        return await get_all_services_status_data()
     except Exception as e:
         logger.error(f"Error getting status: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -89,6 +116,7 @@ async def start_all_services():
         if returncode != 0:
             raise HTTPException(status_code=500, detail=f"Failed to start services: {stderr}")
         
+        await manager.broadcast(json.dumps(await get_all_services_status_data())) # Broadcast update
         return {
             "success": True,
             "message": "All services started successfully",
@@ -107,6 +135,7 @@ async def stop_all_services():
         if returncode != 0:
             raise HTTPException(status_code=500, detail=f"Failed to stop services: {stderr}")
         
+        await manager.broadcast(json.dumps(await get_all_services_status_data())) # Broadcast update
         return {
             "success": True,
             "message": "All services stopped successfully",
@@ -120,7 +149,7 @@ async def stop_all_services():
 async def start_service(service_name: str):
     """Start a specific service."""
     if service_name not in SERVICE_NAMES:
-        raise HTTPException(status_code=404, detail=f"Service '{service_name}' not found")
+        raise HTTPException(status_code=404, detail=f"Service \'{service_name}\' not found")
     
     try:
         stdout, stderr, returncode = run_command(["docker-compose", "up", "-d", service_name])
@@ -128,9 +157,10 @@ async def start_service(service_name: str):
         if returncode != 0:
             raise HTTPException(status_code=500, detail=f"Failed to start service: {stderr}")
         
+        await manager.broadcast(json.dumps(await get_all_services_status_data())) # Broadcast update
         return {
             "success": True,
-            "message": f"Service '{service_name}' started successfully",
+            "message": f"Service \'{service_name}\' started successfully",
             "output": stdout
         }
     except Exception as e:
@@ -141,7 +171,7 @@ async def start_service(service_name: str):
 async def stop_service(service_name: str):
     """Stop a specific service."""
     if service_name not in SERVICE_NAMES:
-        raise HTTPException(status_code=404, detail=f"Service '{service_name}' not found")
+        raise HTTPException(status_code=404, detail=f"Service \'{service_name}\' not found")
     
     try:
         stdout, stderr, returncode = run_command(["docker-compose", "stop", service_name])
@@ -149,9 +179,10 @@ async def stop_service(service_name: str):
         if returncode != 0:
             raise HTTPException(status_code=500, detail=f"Failed to stop service: {stderr}")
         
+        await manager.broadcast(json.dumps(await get_all_services_status_data())) # Broadcast update
         return {
             "success": True,
-            "message": f"Service '{service_name}' stopped successfully",
+            "message": f"Service \'{service_name}\' stopped successfully",
             "output": stdout
         }
     except Exception as e:
@@ -162,7 +193,7 @@ async def stop_service(service_name: str):
 async def restart_service(service_name: str):
     """Restart a specific service."""
     if service_name not in SERVICE_NAMES:
-        raise HTTPException(status_code=404, detail=f"Service '{service_name}' not found")
+        raise HTTPException(status_code=404, detail=f"Service \'{service_name}\' not found")
     
     try:
         stdout, stderr, returncode = run_command(["docker-compose", "restart", service_name])
@@ -170,9 +201,10 @@ async def restart_service(service_name: str):
         if returncode != 0:
             raise HTTPException(status_code=500, detail=f"Failed to restart service: {stderr}")
         
+        await manager.broadcast(json.dumps(await get_all_services_status_data())) # Broadcast update
         return {
             "success": True,
-            "message": f"Service '{service_name}' restarted successfully",
+            "message": f"Service \'{service_name}\' restarted successfully",
             "output": stdout
         }
     except Exception as e:
@@ -183,7 +215,7 @@ async def restart_service(service_name: str):
 async def get_service_logs(service_name: str, lines: int = 100):
     """Get logs for a specific service."""
     if service_name not in SERVICE_NAMES:
-        raise HTTPException(status_code=404, detail=f"Service '{service_name}' not found")
+        raise HTTPException(status_code=404, detail=f"Service \'{service_name}\' not found")
     
     try:
         stdout, stderr, returncode = run_command([
@@ -199,27 +231,76 @@ async def get_service_logs(service_name: str, lines: int = 100):
         logger.error(f"Error getting logs for {service_name}: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8889)
-
-
-# Imports for AI Chat
-from openai import OpenAI
+@app.websocket("/ws/status")
+async def websocket_endpoint(websocket: WebSocket):
+    await manager.connect(websocket)
+    try:
+        while True:
+            # Send initial status immediately upon connection
+            await websocket.send_json(await get_all_services_status_data())
+            await asyncio.sleep(5) # Send updates every 5 seconds
+    except WebSocketDisconnect:
+        manager.disconnect(websocket)
+    except Exception as e:
+        logger.error(f"WebSocket error: {str(e)}")
 
 # Placeholder for OpenAI client (will be initialized with env var)
 openai_client = None
 
-# Function to interact with Meta Ads Master Agent
+# Define a Pydantic model for the ExecutionRequest, matching the Master Agent\'s API
+class MasterExecutionRequest(BaseModel):
+    ads_to_create: int
+    daily_budget: float
+
+# Base URL for the Master Agent service
+MASTER_AGENT_URL = "http://localhost:8000" # Assuming master service is accessible locally from the dashboard backend
+
 async def interact_with_meta_ads_agent(prompt: str):
-    # This is a placeholder. Actual interaction logic would go here.
-    # It might involve calling the master service API (e.g., port 8000)
-    # or other specific agent APIs based on the prompt.
-    # For now, we\'ll simulate a response.
     if "status" in prompt.lower():
-        return {"response": "The Meta Ads Master Agent is currently running. All services are operational."}
+        # Call the dashboard\'s own status endpoint
+        status_data = await get_all_services_status_data()
+        if status_data["success"]:
+            running_services = [s["name"] for s in status_data["services"] if s["status"] == "running"]
+            stopped_services = [s["name"] for s in status_data["services"] if s["status"] == "stopped"]
+            response_text = f"Here is the current status of your Meta Ads AI Agent services:\nRunning: {', '.join(running_services) if running_services else 'None'}\nStopped: {', '.join(stopped_services) if stopped_services else 'None'}"
+            return {"response": response_text}
+        else:
+            return {"response": "I could not retrieve the service status. Please check the backend logs."}
     elif "create ad" in prompt.lower():
-        return {"response": "I can create an ad. What are the ad specifications?"}
+        try:
+            parts = prompt.lower().split()
+            ads_to_create = 1
+            daily_budget = 5.0 # Default budget
+
+            if "create" in parts and "ads" in parts:
+                for i, part in enumerate(parts):
+                    if part == "create" and i + 1 < len(parts) and parts[i+1].isdigit():
+                        ads_to_create = int(parts[i+1])
+                    if part == "budget" and i + 1 < len(parts) and parts[i+1].replace(".", "", 1).isdigit():
+                        daily_budget = float(parts[i+1])
+
+            async with httpx.AsyncClient() as client:
+                response = await client.post(
+                    f"{MASTER_AGENT_URL}/execute",
+                    json=MasterExecutionRequest(ads_to_create=ads_to_create, daily_budget=daily_budget).dict(),
+                    timeout=300 # Extended timeout for agent execution
+                )
+                response.raise_for_status() # Raise an exception for HTTP errors
+                result = response.json()
+
+                if result.get("success"):
+                    return {"response": f"Successfully initiated creation of {result["ads_created"]} ads with a total cost of ${result["total_cost"]:.2f}. Errors: {', '.join(result["errors"]) if result["errors"] else "None"}."}
+                else:
+                    return {"response": f"Failed to create ads: {', '.join(result["errors"]) if result["errors"] else "Unknown error."}"}
+        except httpx.HTTPStatusError as e:
+            logger.error(f"HTTP error interacting with Master Agent: {e.response.text}")
+            return {"response": f"Error communicating with the Master Agent: {e.response.status_code} - {e.response.text}"}
+        except httpx.RequestError as e:
+            logger.error(f"Network error interacting with Master Agent: {e}")
+            return {"response": f"Network error while reaching Master Agent: {e}"}
+        except Exception as e:
+            logger.error(f"Error processing ad creation request: {str(e)}")
+            return {"response": f"I encountered an error trying to create ads: {str(e)}. Please try again or refine your request."}
     else:
         return {"response": f"I received your message: ‘{prompt}’. I\'m still learning how to process complex requests. Please try asking about service status or ad creation."}
 
@@ -229,8 +310,10 @@ async def chat_with_agent(message: dict):
     if not user_message:
         raise HTTPException(status_code=400, detail="Message cannot be empty")
 
-    # Use OpenAI for more advanced natural language understanding if configured
-    # For now, we\'ll use a simple rule-based interaction
     response = await interact_with_meta_ads_agent(user_message)
     return {"response": response["response"]}
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8889)
 
