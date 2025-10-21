@@ -223,6 +223,32 @@ async def stop_all_services():
         "error": stderr
     }
 
+# Legacy endpoint aliases for frontend compatibility
+@app.post("/api/start-all")
+async def legacy_start_all():
+    """Legacy endpoint: Start all services."""
+    return await start_all_services()
+
+@app.post("/api/stop-all")
+async def legacy_stop_all():
+    """Legacy endpoint: Stop all services."""
+    return await stop_all_services()
+
+@app.post("/api/start-service/{service_name}")
+async def legacy_start_service(service_name: str):
+    """Legacy endpoint: Start a specific service."""
+    return await start_service(service_name)
+
+@app.post("/api/stop-service/{service_name}")
+async def legacy_stop_service(service_name: str):
+    """Legacy endpoint: Stop a specific service."""
+    return await stop_service(service_name)
+
+@app.post("/api/restart-service/{service_name}")
+async def legacy_restart_service(service_name: str):
+    """Legacy endpoint: Restart a specific service."""
+    return await restart_service(service_name)
+
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
     """WebSocket endpoint for real-time updates."""
