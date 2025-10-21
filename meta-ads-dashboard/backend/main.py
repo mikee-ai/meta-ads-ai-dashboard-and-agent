@@ -309,9 +309,60 @@ async def interact_with_meta_ads_agent(prompt: str):
 @app.post("/api/chat")
 async def chat_with_agent(message: dict):
     user_message = message.get("message")
+    api_key = message.get("apiKey", "")
+    model = message.get("model", "gpt-4.1-mini")
+    
     if not user_message:
         raise HTTPException(status_code=400, detail="Message cannot be empty")
 
+    # If custom API key is provided, use OpenRouter
+    if api_key:
+        try:
+            from openai import OpenAI
+            client = OpenAI(
+                base_url="https://openrouter.ai/api/v1",
+                api_key=api_key
+            )
+            
+            # Get current service status for context
+            status_data = await get_all_services_status_data()
+            running_services = [s["name"] for s in status_data["services"] if s["status"] == "running"]
+            stopped_services = [s["name"] for s in status_data["services"] if s["status"] == "stopped"]
+            
+            system_prompt = f"""You are the Meta Ads AI Agent Dashboard Assistant. You help users manage their Meta Ads AI Agent system.
+
+Current System Status:
+- Running Services: {', '.join(running_services) if running_services else 'None'}
+- Stopped Services: {', '.join(stopped_services) if stopped_services else 'None'}
+
+You are connected to:
+1. Meta Ads Master Agent (Port 8000) - Orchestrates ad creation and campaign management
+2. Image Generator Service (Port 8001) - Creates AI-powered ad creatives
+3. Performance Analyzer (Port 8003) - Monitors and analyzes campaign performance
+4. Campaign Manager (Port 8004) - Manages campaign configurations
+
+You can help users:
+- Check service status
+- Understand the system architecture
+- Provide guidance on using the dashboard
+- Answer questions about Meta Ads campaigns
+
+All services are managed via Docker Compose and communicate with Meta's Ads API."""
+            
+            completion = client.chat.completions.create(
+                model=model,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_message}
+                ]
+            )
+            
+            return {"response": completion.choices[0].message.content}
+        except Exception as e:
+            logger.error(f"Error using OpenRouter API: {str(e)}")
+            return {"response": f"Error connecting to OpenRouter: {str(e)}. Falling back to basic responses."}
+    
+    # Fallback to basic interaction logic
     response = await interact_with_meta_ads_agent(user_message)
     return {"response": response["response"]}
 
