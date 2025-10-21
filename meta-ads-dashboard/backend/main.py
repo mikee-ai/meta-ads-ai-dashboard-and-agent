@@ -25,6 +25,12 @@ app.add_middleware(
 DOCKER_COMPOSE_DIR = "/root/meta-ads-master-agent"
 SERVICE_NAMES = ["master", "image-generator", "performance-analyzer", "campaign-manager"]
 
+# MCP Server URLs (using localhost since they're on the same VPS)
+MASTER_SERVICE_URL = "http://localhost:8000"
+IMAGE_SERVICE_URL = "http://localhost:8001"
+PERFORMANCE_SERVICE_URL = "http://localhost:8003"
+CAMPAIGN_SERVICE_URL = "http://localhost:8004"
+
 class ConnectionManager:
     def __init__(self):
         self.active_connections: List[WebSocket] = []
@@ -98,238 +104,283 @@ async def get_all_services_status_data() -> Dict:
 async def root():
     return {"message": "Meta Ads AI Agent Management API", "version": "1.0.0"}
 
-@app.get("/api/status")
-async def get_all_status():
+@app.get("/api/services")
+async def get_all_services():
     """Get status of all services."""
-    try:
-        return await get_all_services_status_data()
-    except Exception as e:
-        logger.error(f"Error getting status: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+    return await get_all_services_status_data()
 
-@app.post("/api/start-all")
-async def start_all_services():
-    """Start all services using docker-compose up -d."""
-    try:
-        stdout, stderr, returncode = run_command(["docker-compose", "up", "-d"])
-        
-        if returncode != 0:
-            raise HTTPException(status_code=500, detail=f"Failed to start services: {stderr}")
-        
-        await manager.broadcast(json.dumps(await get_all_services_status_data())) # Broadcast update
-        return {
-            "success": True,
-            "message": "All services started successfully",
-            "output": stdout
-        }
-    except Exception as e:
-        logger.error(f"Error starting services: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+@app.get("/api/status")
+async def get_status():
+    """Get status of all services (alias for /api/services)."""
+    return await get_all_services_status_data()
 
-@app.post("/api/stop-all")
-async def stop_all_services():
-    """Stop all services using docker-compose down."""
-    try:
-        stdout, stderr, returncode = run_command(["docker-compose", "down"])
-        
-        if returncode != 0:
-            raise HTTPException(status_code=500, detail=f"Failed to stop services: {stderr}")
-        
-        await manager.broadcast(json.dumps(await get_all_services_status_data())) # Broadcast update
-        return {
-            "success": True,
-            "message": "All services stopped successfully",
-            "output": stdout
-        }
-    except Exception as e:
-        logger.error(f"Error stopping services: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.post("/api/start-service/{service_name}")
+@app.post("/api/services/{service_name}/start")
 async def start_service(service_name: str):
     """Start a specific service."""
     if service_name not in SERVICE_NAMES:
-        raise HTTPException(status_code=404, detail=f"Service \'{service_name}\' not found")
+        raise HTTPException(status_code=404, detail=f"Service '{service_name}' not found")
     
-    try:
-        stdout, stderr, returncode = run_command(["docker-compose", "up", "-d", service_name])
-        
-        if returncode != 0:
-            raise HTTPException(status_code=500, detail=f"Failed to start service: {stderr}")
-        
-        await manager.broadcast(json.dumps(await get_all_services_status_data())) # Broadcast update
-        return {
-            "success": True,
-            "message": f"Service \'{service_name}\' started successfully",
-            "output": stdout
-        }
-    except Exception as e:
-        logger.error(f"Error starting service {service_name}: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+    stdout, stderr, returncode = run_command([
+        "docker-compose", "up", "-d", service_name
+    ])
+    
+    await manager.broadcast(json.dumps({"type": "service_update", "service": service_name}))
+    
+    return {
+        "success": returncode == 0,
+        "service": service_name,
+        "action": "start",
+        "output": stdout,
+        "error": stderr
+    }
 
-@app.post("/api/stop-service/{service_name}")
+@app.post("/api/services/{service_name}/stop")
 async def stop_service(service_name: str):
     """Stop a specific service."""
     if service_name not in SERVICE_NAMES:
-        raise HTTPException(status_code=404, detail=f"Service \'{service_name}\' not found")
+        raise HTTPException(status_code=404, detail=f"Service '{service_name}' not found")
     
-    try:
-        stdout, stderr, returncode = run_command(["docker-compose", "stop", service_name])
-        
-        if returncode != 0:
-            raise HTTPException(status_code=500, detail=f"Failed to stop service: {stderr}")
-        
-        await manager.broadcast(json.dumps(await get_all_services_status_data())) # Broadcast update
-        return {
-            "success": True,
-            "message": f"Service \'{service_name}\' stopped successfully",
-            "output": stdout
-        }
-    except Exception as e:
-        logger.error(f"Error stopping service {service_name}: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+    stdout, stderr, returncode = run_command([
+        "docker-compose", "stop", service_name
+    ])
+    
+    await manager.broadcast(json.dumps({"type": "service_update", "service": service_name}))
+    
+    return {
+        "success": returncode == 0,
+        "service": service_name,
+        "action": "stop",
+        "output": stdout,
+        "error": stderr
+    }
 
-@app.post("/api/restart-service/{service_name}")
+@app.post("/api/services/{service_name}/restart")
 async def restart_service(service_name: str):
     """Restart a specific service."""
     if service_name not in SERVICE_NAMES:
-        raise HTTPException(status_code=404, detail=f"Service \'{service_name}\' not found")
+        raise HTTPException(status_code=404, detail=f"Service '{service_name}' not found")
     
-    try:
-        stdout, stderr, returncode = run_command(["docker-compose", "restart", service_name])
-        
-        if returncode != 0:
-            raise HTTPException(status_code=500, detail=f"Failed to restart service: {stderr}")
-        
-        await manager.broadcast(json.dumps(await get_all_services_status_data())) # Broadcast update
-        return {
-            "success": True,
-            "message": f"Service \'{service_name}\' restarted successfully",
-            "output": stdout
-        }
-    except Exception as e:
-        logger.error(f"Error restarting service {service_name}: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+    stdout, stderr, returncode = run_command([
+        "docker-compose", "restart", service_name
+    ])
+    
+    await manager.broadcast(json.dumps({"type": "service_update", "service": service_name}))
+    
+    return {
+        "success": returncode == 0,
+        "service": service_name,
+        "action": "restart",
+        "output": stdout,
+        "error": stderr
+    }
 
-@app.get("/api/logs/{service_name}")
+@app.get("/api/services/{service_name}/logs")
 async def get_service_logs(service_name: str, lines: int = 100):
     """Get logs for a specific service."""
     if service_name not in SERVICE_NAMES:
-        raise HTTPException(status_code=404, detail=f"Service \'{service_name}\' not found")
+        raise HTTPException(status_code=404, detail=f"Service '{service_name}' not found")
     
-    try:
-        stdout, stderr, returncode = run_command([
-            "docker-compose", "logs", "--tail", str(lines), service_name
-        ])
-        
-        return {
-            "success": True,
-            "service": service_name,
-            "logs": stdout if stdout else stderr
-        }
-    except Exception as e:
-        logger.error(f"Error getting logs for {service_name}: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+    stdout, stderr, returncode = run_command([
+        "docker-compose", "logs", "--tail", str(lines), service_name
+    ])
+    
+    return {
+        "success": returncode == 0,
+        "service": service_name,
+        "logs": stdout,
+        "error": stderr
+    }
 
-@app.websocket("/ws/status")
+@app.post("/api/services/start-all")
+async def start_all_services():
+    """Start all services."""
+    stdout, stderr, returncode = run_command([
+        "docker-compose", "up", "-d"
+    ])
+    
+    await manager.broadcast(json.dumps({"type": "service_update", "service": "all"}))
+    
+    return {
+        "success": returncode == 0,
+        "action": "start-all",
+        "output": stdout,
+        "error": stderr
+    }
+
+@app.post("/api/services/stop-all")
+async def stop_all_services():
+    """Stop all services."""
+    stdout, stderr, returncode = run_command([
+        "docker-compose", "stop"
+    ])
+    
+    await manager.broadcast(json.dumps({"type": "service_update", "service": "all"}))
+    
+    return {
+        "success": returncode == 0,
+        "action": "stop-all",
+        "output": stdout,
+        "error": stderr
+    }
+
+@app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
+    """WebSocket endpoint for real-time updates."""
     await manager.connect(websocket)
     try:
         while True:
-            # Send initial status immediately upon connection
-            await websocket.send_json(await get_all_services_status_data())
-            await asyncio.sleep(5) # Send updates every 5 seconds
+            data = await websocket.receive_text()
+            if data == "ping":
+                await websocket.send_text("pong")
     except WebSocketDisconnect:
         manager.disconnect(websocket)
-    except Exception as e:
-        logger.error(f"WebSocket error: {str(e)}")
 
-# Placeholder for OpenAI client (will be initialized with env var)
-openai_client = None
+# MCP Tool Definitions
+MCP_TOOLS = [
+    {
+        "name": "create_ads",
+        "description": "Create new Meta ads with AI-generated images and copy. Orchestrates the complete ad creation workflow including hook selection, image generation, and campaign creation.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "ads_to_create": {
+                    "type": "integer",
+                    "description": "Number of ads to create (1-10)",
+                    "default": 1
+                },
+                "daily_budget": {
+                    "type": "integer",
+                    "description": "Daily budget in cents (e.g., 500 = $5.00)",
+                    "default": 500
+                }
+            }
+        }
+    },
+    {
+        "name": "check_service_health",
+        "description": "Check the health status of all Meta Ads microservices",
+        "parameters": {
+            "type": "object",
+            "properties": {}
+        }
+    },
+    {
+        "name": "get_recent_ads_count",
+        "description": "Get the count of ads created in a specific time period",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "hours": {
+                    "type": "integer",
+                    "description": "Number of hours to look back",
+                    "default": 4
+                }
+            }
+        }
+    }
+]
 
-# Define a Pydantic model for the ExecutionRequest, matching the Master Agent\'s API
-class MasterExecutionRequest(BaseModel):
-    ads_to_create: int
-    daily_budget: float
-
-# Base URL for the Master Agent service
-MASTER_AGENT_URL = "http://localhost:8000" # Assuming master service is accessible locally from the dashboard backend
-
-async def interact_with_meta_ads_agent(prompt: str):
-    if "status" in prompt.lower():
-        # Call the dashboard\'s own status endpoint
-        status_data = await get_all_services_status_data()
-        if status_data["success"]:
-            running_services = [s["name"] for s in status_data["services"] if s["status"] == "running"]
-            stopped_services = [s["name"] for s in status_data["services"] if s["status"] == "stopped"]
-            response_text = f"Here is the current status of your Meta Ads AI Agent services:\nRunning: {', '.join(running_services) if running_services else 'None'}\nStopped: {', '.join(stopped_services) if stopped_services else 'None'}"
-            return {"response": response_text}
-        else:
-            return {"response": "I could not retrieve the service status. Please check the backend logs."}
-    elif "create ad" in prompt.lower():
-        try:
-            parts = prompt.lower().split()
-            ads_to_create = 1
-            daily_budget = 5.0 # Default budget
-
-            if "create" in parts and "ads" in parts:
-                for i, part in enumerate(parts):
-                    if part == "create" and i + 1 < len(parts) and parts[i+1].isdigit():
-                        ads_to_create = int(parts[i+1])
-                    if part == "budget" and i + 1 < len(parts) and parts[i+1].replace(".", "", 1).isdigit():
-                        daily_budget = float(parts[i+1])
-
-            async with httpx.AsyncClient() as client:
+async def call_mcp_tool(tool_name: str, arguments: dict) -> str:
+    """Call an MCP tool and return the result"""
+    try:
+        if tool_name == "create_ads":
+            ads_to_create = arguments.get("ads_to_create", 1)
+            daily_budget = arguments.get("daily_budget", 500)
+            
+            async with httpx.AsyncClient(timeout=600.0) as client:
                 response = await client.post(
-                    f"{MASTER_AGENT_URL}/execute",
-                    json=MasterExecutionRequest(ads_to_create=ads_to_create, daily_budget=daily_budget).dict(),
-                    timeout=300 # Extended timeout for agent execution
+                    f"{MASTER_SERVICE_URL}/execute",
+                    json={
+                        "ads_to_create": ads_to_create,
+                        "daily_budget": daily_budget
+                    }
                 )
-                response.raise_for_status() # Raise an exception for HTTP errors
-                result = response.json()
-
-                if result.get("success"):
-                    return {"response": f"Successfully initiated creation of {result["ads_created"]} ads with a total cost of ${result["total_cost"]:.2f}. Errors: {', '.join(result["errors"]) if result["errors"] else "None"}."}
+                
+                if response.status_code == 200:
+                    result = response.json()
+                    return json.dumps(result, indent=2)
                 else:
-                    return {"response": f"Failed to create ads: {', '.join(result["errors"]) if result["errors"] else "Unknown error."}"}
-        except httpx.HTTPStatusError as e:
-            logger.error(f"HTTP error interacting with Master Agent: {e.response.text}")
-            return {"response": f"Error communicating with the Master Agent: {e.response.status_code} - {e.response.text}"}
-        except httpx.RequestError as e:
-            logger.error(f"Network error interacting with Master Agent: {e}")
-            return {"response": f"Network error while reaching Master Agent: {e}"}
-        except Exception as e:
-            logger.error(f"Error processing ad creation request: {str(e)}")
-            return {"response": f"I encountered an error trying to create ads: {str(e)}. Please try again or refine your request."}
-    elif "what are you" in prompt.lower() or "who are you" in prompt.lower() or "connect" in prompt.lower():
-        return {"response": "I am the Meta Ads AI Agent Dashboard Assistant. I'm connected to:\n\n1. **Meta Ads Master Agent** (Port 8000) - Orchestrates ad creation and campaign management\n2. **Image Generator Service** (Port 8001) - Creates AI-powered ad creatives\n3. **Performance Analyzer** (Port 8003) - Monitors and analyzes campaign performance\n4. **Campaign Manager** (Port 8004) - Manages campaign configurations\n\nI can help you:\n- Check service status\n- Create ads (e.g., 'create 5 ads with budget 10.0')\n- Monitor agent performance\n- Manage your Meta Ads campaigns\n\nAll services are managed via Docker Compose and communicate with Meta's Ads API."}
-    else:
-        return {"response": f"I received your message: '{prompt}'. I\'m still learning how to process complex requests. Please try asking about:\n\n- Service status (e.g., 'what is the status?')\n- Ad creation (e.g., 'create 5 ads with budget 10.0')\n- My capabilities (e.g., 'what are you connected to?')"}
-
-@app.post("/api/chat")
-async def chat_with_agent(message: dict):
-    user_message = message.get("message")
-    api_key = message.get("apiKey", "")
-    model = message.get("model", "gpt-4.1-mini")
-    
-    if not user_message:
-        raise HTTPException(status_code=400, detail="Message cannot be empty")
-
-    # If custom API key is provided, use OpenRouter
-    if api_key:
-        try:
-            from openai import OpenAI
-            client = OpenAI(
-                base_url="https://openrouter.ai/api/v1",
-                api_key=api_key
-            )
+                    return f"Error creating ads: {response.status_code} - {response.text}"
+        
+        elif tool_name == "check_service_health":
+            health_status = {}
+            services = {
+                "master": f"{MASTER_SERVICE_URL}/health",
+                "image-generator": f"{IMAGE_SERVICE_URL}/health",
+                "performance-analyzer": f"{PERFORMANCE_SERVICE_URL}/health",
+                "campaign-manager": f"{CAMPAIGN_SERVICE_URL}/health"
+            }
             
-            # Get current service status for context
-            status_data = await get_all_services_status_data()
-            running_services = [s["name"] for s in status_data["services"] if s["status"] == "running"]
-            stopped_services = [s["name"] for s in status_data["services"] if s["status"] == "stopped"]
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                for service_name, health_url in services.items():
+                    try:
+                        response = await client.get(health_url)
+                        health_status[service_name] = {
+                            "status": "healthy" if response.status_code == 200 else "unhealthy",
+                            "status_code": response.status_code
+                        }
+                    except Exception as e:
+                        health_status[service_name] = {
+                            "status": "unreachable",
+                            "error": str(e)
+                        }
             
-            system_prompt = f"""You are the Meta Ads AI Agent Dashboard Assistant. You help users manage their Meta Ads AI Agent system.
+            return json.dumps(health_status, indent=2)
+        
+        elif tool_name == "get_recent_ads_count":
+            hours = arguments.get("hours", 4)
+            # This would query logs or database for recent ads
+            # For now, return a simulated count based on logs
+            try:
+                stdout, stderr, returncode = run_command([
+                    "docker-compose", "logs", "--since", f"{hours}h", "master"
+                ])
+                
+                # Count occurrences of "Ad created" or similar patterns in logs
+                import re
+                ad_created_pattern = r"(Ad created|ads_created|Creating Ad)"
+                matches = re.findall(ad_created_pattern, stdout, re.IGNORECASE)
+                count = len(matches)
+                
+                return json.dumps({
+                    "hours": hours,
+                    "ads_created": count,
+                    "message": f"Found {count} ads created in the last {hours} hours based on log analysis"
+                }, indent=2)
+            except Exception as e:
+                return json.dumps({
+                    "error": str(e),
+                    "message": "Could not retrieve ad count from logs"
+                }, indent=2)
+        
+        else:
+            return f"Unknown tool: {tool_name}"
+            
+    except Exception as e:
+        logger.error(f"Error calling MCP tool {tool_name}: {str(e)}")
+        return f"Error: {str(e)}"
+
+async def chat_with_ai_agent(user_message: str, api_key: str, model: str) -> str:
+    """Chat with AI agent that has access to MCP tools"""
+    try:
+        from openai import OpenAI
+        client = OpenAI(
+            base_url="https://openrouter.ai/api/v1",
+            api_key=api_key
+        )
+        
+        # Get current service status for context
+        status_data = await get_all_services_status_data()
+        running_services = [s["name"] for s in status_data["services"] if s["status"] == "running"]
+        stopped_services = [s["name"] for s in status_data["services"] if s["status"] == "stopped"]
+        
+        # Build system prompt with MCP tools
+        tools_description = "\n".join([
+            f"- {tool['name']}: {tool['description']}"
+            for tool in MCP_TOOLS
+        ])
+        
+        system_prompt = f"""You are the Meta Ads AI Agent Dashboard Assistant with access to powerful tools through the Model Context Protocol (MCP).
 
 Current System Status:
 - Running Services: {', '.join(running_services) if running_services else 'None'}
@@ -341,127 +392,84 @@ You are connected to:
 3. Performance Analyzer (Port 8003) - Monitors and analyzes campaign performance
 4. Campaign Manager (Port 8004) - Manages campaign configurations
 
-You can help users:
-- Check service status
-- Understand the system architecture
-- Provide guidance on using the dashboard
-- Answer questions about Meta Ads campaigns
+Available MCP Tools:
+{tools_description}
 
-All services are managed via Docker Compose and communicate with Meta's Ads API."""
-            
-            completion = client.chat.completions.create(
-                model=model,
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_message}
-                ]
-            )
-            
-            return {"response": completion.choices[0].message.content}
-        except Exception as e:
-            logger.error(f"Error using OpenRouter API: {str(e)}")
-            return {"response": f"Error connecting to OpenRouter: {str(e)}. Falling back to basic responses."}
+When a user asks you to perform actions like creating ads, checking health, or getting statistics, you should use the appropriate tool by responding with a JSON object in this format:
+{{"tool": "tool_name", "arguments": {{"param": "value"}}}}
+
+For example:
+- To create 5 ads: {{"tool": "create_ads", "arguments": {{"ads_to_create": 5, "daily_budget": 1000}}}}
+- To check health: {{"tool": "check_service_health", "arguments": {{}}}}
+- To get recent ads count: {{"tool": "get_recent_ads_count", "arguments": {{"hours": 4}}}}
+
+If you use a tool, respond ONLY with the JSON tool call. Otherwise, respond conversationally."""
+        
+        completion = client.chat.completions.create(
+            model=model,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_message}
+            ]
+        )
+        
+        ai_response = completion.choices[0].message.content
+        
+        # Check if AI wants to use a tool
+        try:
+            if ai_response.strip().startswith("{") and "tool" in ai_response:
+                tool_call = json.loads(ai_response)
+                tool_name = tool_call.get("tool")
+                tool_args = tool_call.get("arguments", {})
+                
+                logger.info(f"AI agent calling tool: {tool_name} with args: {tool_args}")
+                
+                # Execute the tool
+                tool_result = await call_mcp_tool(tool_name, tool_args)
+                
+                # Send result back to AI for interpretation
+                completion2 = client.chat.completions.create(
+                    model=model,
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": user_message},
+                        {"role": "assistant", "content": ai_response},
+                        {"role": "user", "content": f"Tool result:\n{tool_result}\n\nPlease interpret this result and provide a user-friendly response."}
+                    ]
+                )
+                
+                return completion2.choices[0].message.content
+        except json.JSONDecodeError:
+            pass  # Not a tool call, return the response as-is
+        
+        return ai_response
+        
+    except Exception as e:
+        logger.error(f"Error in AI agent chat: {str(e)}")
+        raise
+
+@app.post("/api/chat")
+async def chat_with_agent(message: dict):
+    user_message = message.get("message")
+    api_key = message.get("apiKey", "")
+    model = message.get("model", "gpt-4.1-mini")
     
-    # Fallback to basic interaction logic
-    response = await interact_with_meta_ads_agent(user_message)
-    return {"response": response["response"]}
+    if not user_message:
+        raise HTTPException(status_code=400, detail="Message cannot be empty")
+
+    # Use AI agent with MCP tools if API key is provided
+    if api_key:
+        try:
+            response = await chat_with_ai_agent(user_message, api_key, model)
+            return {"response": response}
+        except Exception as e:
+            logger.error(f"Error using AI agent: {str(e)}")
+            return {"response": f"Error: {str(e)}"}
+    
+    # Fallback to basic responses
+    return {"response": "Please configure your OpenRouter API key in Settings to enable AI-powered chat with MCP tool access."}
 
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8889)
-
-
-
-
-class DashboardSettings(BaseModel):
-    openrouterApiKey: str = ""
-    aiModel: str = "gpt-4.1-mini"
-    kieApiKey: str = ""
-    fbAccessToken: str = ""
-    adAccountId: str = ""
-    pageId: str = ""
-    runInterval: str = ""
-    adsPerRun: str = ""
-    dailyBudget: str = ""
-
-@app.post("/api/settings")
-async def save_settings(settings: DashboardSettings):
-    """Save dashboard settings to .env file."""
-    try:
-        env_file_path = os.path.join(DOCKER_COMPOSE_DIR, ".env")
-        
-        # Read existing .env content
-        env_content = {}
-        if os.path.exists(env_file_path):
-            with open(env_file_path, "r") as f:
-                for line in f:
-                    line = line.strip()
-                    if line and not line.startswith("#") and "=" in line:
-                        key, value = line.split("=", 1)
-                        env_content[key] = value
-        
-        # Update with new settings
-        if settings.kieApiKey:
-            env_content["KIE_API_KEY"] = settings.kieApiKey
-        if settings.fbAccessToken:
-            env_content["FB_ACCESS_TOKEN"] = settings.fbAccessToken
-        if settings.adAccountId:
-            env_content["AD_ACCOUNT_ID"] = settings.adAccountId
-        if settings.pageId:
-            env_content["PAGE_ID"] = settings.pageId
-        if settings.runInterval:
-            env_content["RUN_INTERVAL"] = settings.runInterval
-        if settings.adsPerRun:
-            env_content["ADS_PER_RUN"] = settings.adsPerRun
-        if settings.dailyBudget:
-            env_content["DAILY_BUDGET"] = settings.dailyBudget
-        
-        # Write back to .env file
-        with open(env_file_path, "w") as f:
-            for key, value in env_content.items():
-                f.write(f"{key}={value}\n")
-        
-        return {
-            "success": True,
-            "message": "Settings saved successfully"
-        }
-    except Exception as e:
-        logger.error(f"Error saving settings: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.get("/api/settings")
-async def get_settings():
-    """Get current dashboard settings from .env file."""
-    try:
-        env_file_path = os.path.join(DOCKER_COMPOSE_DIR, ".env")
-        settings = {}
-        
-        if os.path.exists(env_file_path):
-            with open(env_file_path, "r") as f:
-                for line in f:
-                    line = line.strip()
-                    if line and not line.startswith("#") and "=" in line:
-                        key, value = line.split("=", 1)
-                        if key == "KIE_API_KEY":
-                            settings["kieApiKey"] = value
-                        elif key == "FB_ACCESS_TOKEN":
-                            settings["fbAccessToken"] = value
-                        elif key == "AD_ACCOUNT_ID":
-                            settings["adAccountId"] = value
-                        elif key == "PAGE_ID":
-                            settings["pageId"] = value
-                        elif key == "RUN_INTERVAL":
-                            settings["runInterval"] = value
-                        elif key == "ADS_PER_RUN":
-                            settings["adsPerRun"] = value
-                        elif key == "DAILY_BUDGET":
-                            settings["dailyBudget"] = value
-        
-        return {
-            "success": True,
-            "settings": settings
-        }
-    except Exception as e:
-        logger.error(f"Error getting settings: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
 
