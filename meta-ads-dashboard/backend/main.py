@@ -301,8 +301,10 @@ async def interact_with_meta_ads_agent(prompt: str):
         except Exception as e:
             logger.error(f"Error processing ad creation request: {str(e)}")
             return {"response": f"I encountered an error trying to create ads: {str(e)}. Please try again or refine your request."}
+    elif "what are you" in prompt.lower() or "who are you" in prompt.lower() or "connect" in prompt.lower():
+        return {"response": "I am the Meta Ads AI Agent Dashboard Assistant. I'm connected to:\n\n1. **Meta Ads Master Agent** (Port 8000) - Orchestrates ad creation and campaign management\n2. **Image Generator Service** (Port 8001) - Creates AI-powered ad creatives\n3. **Performance Analyzer** (Port 8003) - Monitors and analyzes campaign performance\n4. **Campaign Manager** (Port 8004) - Manages campaign configurations\n\nI can help you:\n- Check service status\n- Create ads (e.g., 'create 5 ads with budget 10.0')\n- Monitor agent performance\n- Manage your Meta Ads campaigns\n\nAll services are managed via Docker Compose and communicate with Meta's Ads API."}
     else:
-        return {"response": f"I received your message: ‘{prompt}’. I\'m still learning how to process complex requests. Please try asking about service status or ad creation."}
+        return {"response": f"I received your message: '{prompt}'. I\'m still learning how to process complex requests. Please try asking about:\n\n- Service status (e.g., 'what is the status?')\n- Ad creation (e.g., 'create 5 ads with budget 10.0')\n- My capabilities (e.g., 'what are you connected to?')"}
 
 @app.post("/api/chat")
 async def chat_with_agent(message: dict):
