@@ -317,3 +317,98 @@ if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8889)
 
+
+
+
+class DashboardSettings(BaseModel):
+    openrouterApiKey: str = ""
+    aiModel: str = "gpt-4.1-mini"
+    kieApiKey: str = ""
+    fbAccessToken: str = ""
+    adAccountId: str = ""
+    pageId: str = ""
+    runInterval: str = ""
+    adsPerRun: str = ""
+    dailyBudget: str = ""
+
+@app.post("/api/settings")
+async def save_settings(settings: DashboardSettings):
+    """Save dashboard settings to .env file."""
+    try:
+        env_file_path = os.path.join(DOCKER_COMPOSE_DIR, ".env")
+        
+        # Read existing .env content
+        env_content = {}
+        if os.path.exists(env_file_path):
+            with open(env_file_path, "r") as f:
+                for line in f:
+                    line = line.strip()
+                    if line and not line.startswith("#") and "=" in line:
+                        key, value = line.split("=", 1)
+                        env_content[key] = value
+        
+        # Update with new settings
+        if settings.kieApiKey:
+            env_content["KIE_API_KEY"] = settings.kieApiKey
+        if settings.fbAccessToken:
+            env_content["FB_ACCESS_TOKEN"] = settings.fbAccessToken
+        if settings.adAccountId:
+            env_content["AD_ACCOUNT_ID"] = settings.adAccountId
+        if settings.pageId:
+            env_content["PAGE_ID"] = settings.pageId
+        if settings.runInterval:
+            env_content["RUN_INTERVAL"] = settings.runInterval
+        if settings.adsPerRun:
+            env_content["ADS_PER_RUN"] = settings.adsPerRun
+        if settings.dailyBudget:
+            env_content["DAILY_BUDGET"] = settings.dailyBudget
+        
+        # Write back to .env file
+        with open(env_file_path, "w") as f:
+            for key, value in env_content.items():
+                f.write(f"{key}={value}\n")
+        
+        return {
+            "success": True,
+            "message": "Settings saved successfully"
+        }
+    except Exception as e:
+        logger.error(f"Error saving settings: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/settings")
+async def get_settings():
+    """Get current dashboard settings from .env file."""
+    try:
+        env_file_path = os.path.join(DOCKER_COMPOSE_DIR, ".env")
+        settings = {}
+        
+        if os.path.exists(env_file_path):
+            with open(env_file_path, "r") as f:
+                for line in f:
+                    line = line.strip()
+                    if line and not line.startswith("#") and "=" in line:
+                        key, value = line.split("=", 1)
+                        if key == "KIE_API_KEY":
+                            settings["kieApiKey"] = value
+                        elif key == "FB_ACCESS_TOKEN":
+                            settings["fbAccessToken"] = value
+                        elif key == "AD_ACCOUNT_ID":
+                            settings["adAccountId"] = value
+                        elif key == "PAGE_ID":
+                            settings["pageId"] = value
+                        elif key == "RUN_INTERVAL":
+                            settings["runInterval"] = value
+                        elif key == "ADS_PER_RUN":
+                            settings["adsPerRun"] = value
+                        elif key == "DAILY_BUDGET":
+                            settings["dailyBudget"] = value
+        
+        return {
+            "success": True,
+            "settings": settings
+        }
+    except Exception as e:
+        logger.error(f"Error getting settings: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
